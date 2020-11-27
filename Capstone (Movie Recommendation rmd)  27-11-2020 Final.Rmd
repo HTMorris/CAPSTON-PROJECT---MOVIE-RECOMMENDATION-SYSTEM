@@ -1,0 +1,1598 @@
+---
+title: "Movie Recommendation System"
+author: "Hugh Morris"
+date: "27/11/2020"
+output: 
+ pdf_document:
+ toc: true
+ toc_depth: 4
+ fontsize: 25pt
+ #bibliography: biblio.bib
+ #csl: iso690-author-date-fr-no-abstract.csl
+ #link-citations: yes
+#geometry: margin=1in
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+#load packages
+library(tidyverse)
+library(gt)
+library(tinytex)
+library(formattable)
+library(lubridate)
+
+```
+
+# EXECUTIVE SUMMARY
+
+A dataset consisting of approximately 10 million movie ratings for 10,677 movies, from 69,878 users of the movie recommender service MovieLens, was used to construct a movie recommendation system. 90% of the dataset was used for training and tuning model parameters (edx dataset), while the remaining 10% was used to test the accuracy of the model (validation dataset). The goal was to produce a model that has a root mean square error (RMSE) of less than 0.86490
+
+To build the movie recommendation system, information on the average effects of each movie, user , genre, as well as date were used. The date effects captures information on when a movie premiered, the date (year, month, week, day) it was rated, in addition to the gap between when a movie was rated and when it premiered in years. The edx dataset was further subdivided into edx\_train, which was used to build the model and edx\_test, which was used to tune model parameters (penalty terms), and the one that produced the lowest RMSE chosen.
+
+Exploratory data analysis was undertaken to aid in model development. Six predictors were included in the model, movieId; userId, genres; year premiered; gap between when a movie was rated and when it is premiered (gap effect); and year rated. Given the small sample sizes for some of the predictors, a regularization approach was used in model development.
+
+```{r rmse_valid, echo=FALSE, message=FALSE, warning=FALSE}
+# load the rmse for validation dataset
+rmse_validation <- readRDS("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/rmse_validation.Rds")
+
+rmse_validation_nodate <- readRDS("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/rmse_validation_nodate.Rds")
+
+rmse_validation_exclude_yeargap_yearrated <- readRDS("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/rmse_validation_exclude_yeargap_yearrated.Rds")
+
+
+```
+
+The regularized model optimizes the effects (movies, users, etc) at each stage of the model construction (that is the penalty term is unique for each variable), which was then used in all subsequent stages. The model was then applied to the validation dataset to predict ratings a user will give a movie and produced a RMSE of `r round(rmse_validation$.estimate,5)`, which was below the target of 0.86490. It should be noted that if the date effects were not included in the model the RMSE for the validation dataset would have been `r round(rmse_validation_nodate$.estimate,5)`, which is above the desired level.
+
+**Key Words: Movie Recommendation System, Regularization, Feature Engineering**
+
+# SECTION I: INTRODUCTION
+
+The increase in options available to consumers have made recommendation systems a very useful tool in aiding consumers when making decisions. This tool is especially useful in making movie recommendations given the large number of movies available.
+
+The objective of this paper is to develop an algorithm that predicts the rating a user will give to a movie, which will then be used to make recommendations to the user. The data set used in the paper contains, 10,000,054 movie ratings for 10,677 movies, from 69,878 users selected at random with at least 20 movie ratings, from the movie recommender service MovieLens 10M Dataset[@harper2016].
+
+In order to assess the accuracy of the movie recommendation model, the movieLens dataset was subdivided into edx dataset, for training and tuning of model parameters, and a validation dataset to test the accuracy of the model. The goal is to construct a model using the edx data set, which will be used to predict users' rating of movies in the validation dataset, with a root mean square error (RMSE) of less than 0.86490.
+
+To construct the recommendation model, the paper will utilize information on movie effects, user effects, genre effects, as well as, date effects. The date effects seek to capture the effects of when the movie premiered, the date when the movie was rated (year, month and week), in addition to the gap in years between when a movie premiered and when it was rated. The model will be constructed by estimating the average effect of each variable when controlling for the other variables.
+
+The rest of the paper will be as follows:
+
+-   Section II will give a brief description of the dataset, feature engineering, data cleaning and exploratory data analysis
+
+-   Section III will present the methodology used in constructing the model
+
+-   Section IV will present the modeling results and performance
+
+-   Section VI will conclude by summarizing key findings, speak to limitations and recommendation for future work.
+
+# SECTION II: DATA DESCRIPTION, WRANGLING AND EXPLORATORY DATA ANALYSIS (EDA)
+
+A key step in any data analysis is to first describe the data used in the analysis, undertake data wrangling to create features (predictors) and clean the dataset, as well as undertake exploratory data analysis to inform potential variable selections that should be included in the analysis.
+
+## Data Description
+
+```{r distinct, echo=FALSE, message=FALSE, warning=FALSE}
+# load the movielens_distinct dataset
+
+distinct <- readRDS("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/movielens_distinct.Rds")
+
+```
+
+The movielens dataset consist of 6 columns with 10,000,054 rows. The columns are as follows:
+
+-   userId - represents anonymized user identification. There are `r formattable::comma(as.numeric(distinct$userId), digits = 0)` unique users
+
+-   movieId - represents the identification given to each movie by MovieLens. There are `r formattable::comma(as.numeric(distinct$movieId), digits = 0)` unique movies
+
+-   rating - represents the rating given to a movie by a user. Ratings are made on a 5 point scale with 0.5 points increment starting from 0.5. There are `r formattable::comma(as.numeric(distinct$rating), digits = 0)` unique ratings
+
+-   timestamp - represents the date and time the movie was rated and it is measured in seconds since midnight Coordinated Universal Time (UTC) of Jauary 1, 1970. There are `r formattable::comma(as.numeric(distinct$timestamp), digits = 0)` unique timestamps
+
+-   title - represents the movie title and include the year the movie premiered at the end in bracket, there are `r formattable::comma(as.numeric(distinct$title), digits = 0)` unique titles
+
+-   genres - represents a pipe-separated list of different genres. They are `r formattable::comma(as.numeric(distinct$genres), digits = 0)` unique genre groups
+
+Table 1 below gives the first 5 observations within the movielens dataset. The first thing to note is that the first 5 rows only have information on one user, whose anonymized userId is 1. This user has given the first 5 movies (based on unique movieId and title) a rating of 5. Notice that the movie title has the year the movie premiered in bracket at the end. The genres variable includes all the genres the movie is classified under.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# load the movielens_head R_File created
+M_Table1<- readRDS( "C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/movielens_head.Rds")
+
+M_Table1 %>% 
+    gt()%>% 
+  tab_header(
+    title = "TABLE 1",
+    subtitle = "First 5 rows of MovieLens 10M Dataset"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle"))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3,5))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3,5))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2,4,6))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2,4,6))
+  ) 
+
+
+```
+
+The objective is to develop a model to predict the rating a user will give to a movie. Therefore, rating is our dependent variable, and the other variables are potential independent variables that can be used to aid in predicting the rating each user will gives to a movie.
+
+To reduce the likelihood of overfitting, the movielens dataset is randomly subdivided into edx dataset (90% of the movielens dataset) for model training and parameter tuning; and validation dataset (10% of the movielens dataset) which will represent the final holdout test set for which the model will be evaluated. Since the edx dataset will be used to train the model, it was ensured that all the users and movie identifications in the movielens dataset were also in the edx dataset.
+
+## Data Wrangling
+
+For the remainder of this section the focus will be on the edx dataset, the validation dataset will be treated as if it is unknown, until it is time to assess the accuracy of our model using the RMSE. The goal is to identify the predictors/independent variables from the remaining 5 variables to build a model. While some of the potential indicators are clear, for example, using the variables movieId, userId and genres, the other potential predictors require some data wrangling to be of use.
+
+The first problem that we identified was that the title column is not tidy, it has the year in which the movie premiered in its title (see Table 1). Secondly, the timestamp can be adjusted to represent date and time, which may be used to generate other predictors, a technique commonly called feature engineering [@kuhn2019].
+
+```{r edx_df1_head, echo=FALSE}
+
+# load the edx_df1_head R_File created
+edx_Table1<- readRDS( "C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/edx_df1_head.Rds")
+```
+
+The following adjustments were made to the edx dataset:
+
+-   the year the movie premiered was extracted from the title column and called year\_movie
+
+```{r title, echo=FALSE, warning=FALSE, message=FALSE}
+
+edx_Table1 %>% 
+  select(title, year_movie) %>% 
+    gt()  %>% 
+  tab_header(
+    title = "TABLE 2a",
+    subtitle = "First 5 rows of title and year_movie from edx dataset"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+   tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  ) 
+
+```
+
+-   the timestamp column was converted into a date and time format, thereafter, the year, month , week and weekday in which the movie was rated was extracted as potential predictors. It should be noted that the hour, minutes and second could have been extracted as potential predictors.
+
+    -   year\_rated, which ranges from 1915 to 2008
+
+    -   month\_rated, which ranges from 1 (January) to 12 (December)
+
+    -   week\_rated, which ranges from 1 (first week) to 53 (last week in a leap year)
+
+    -   day\_rated, which ranges from 1 (Sunday) to 7 (Saturday). For example, the 2 of August in 1996, is a Friday, which is the sixth day of the week (Table 2b).
+
+```{r timestamp, echo=FALSE, warning=FALSE, message=FALSE}
+
+edx_Table1 %>% 
+  select(timestamp, date, year_rated, month_rated, week_rated, day_rated) %>% 
+    gt()  %>% 
+  tab_header(
+    title = "TABLE 2b",
+    subtitle = "First 5 rows of timestamp and its features from edx dataset"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle"))
+  ) %>% 
+   tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3,5))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3,5))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2,4,6))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2,4,6))
+  ) 
+
+
+```
+
+-   The gap between when a movie premiered and when it was rated in years is also included as an additional predictor. That is, year\_movie - year\_rated = year\_gap. The assumption is that the gap between when a movie premiered and when it is rated would influence the rating it receives. This relationship may be negative, as the gap between when a movie premiered and when it is rated increases, it is hypothesized that the technology used to produce the movie in the past would be below the standard of the time the movie was rated the larger the gap year, so users are more likely to rate movies that has a large gap year less favorable (*technology effect*).
+-   The relationship between gap year and average rating may also be positive, as some users are more likely to rate a movie that has a large gap year higher because of the *nostalgia effects*. The view that things made in the past are better.
+
+```{r Table_2c, echo=FALSE, warning=FALSE, message=FALSE}
+
+edx_Table1 %>% 
+  select(title, year_movie, year_rated, year_gap) %>% 
+    gt()  %>% 
+  tab_header(
+    title = "TABLE 2c",
+    subtitle = "First 5 rows of title, year_movie, year_rated and year_gap from edx dataset"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle"))
+  ) %>% 
+   tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2,4))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2,4))
+  ) 
+
+
+```
+
+![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAaCAYAAADFTB7LAAAAa0lEQVR42u3OywnAIBBAwcXSUoCW5D11xDoNCBGNv0MOecJOBSOi1OZMsJ4dvFxEJ1OQnMxBarIKEpNNkJbsBknJYZCSnAYJyVVQziNig7/nZkFEbhTE5HpBVO4dxOXKIDL3BLG5BJ1T6rsbMfep2CaMN00AAAAASUVORK5CYII= "Run Current Chunk")
+
+Now that we have created some features, the edx dataset is randomly split into edx\_train, which accounts for 90% of the edx dataset and edx\_test which account for the remaining 10% of the edx dataset. The model will be built on edx\_train with its parameters calibrated/tuned using the edx\_test dataset. The datasets were adjusted to ensure that edx\_train has all the movies and user ids in the edx dataset.
+
+The next step in the process is exploratory data analysis, which will inform data cleaning and variables to include in model (Figure 1). Exploratory data analysis and data cleaning goes hand in hand and will impact how features are generated.
+
+```{r Process, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+
+knitr::include_graphics("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/graph/DATA_FLOW1.png")
+```
+
+**FIGURE 1: WORK FLOW PROCESS**
+
+## Exploratory Data Analysis
+
+One of the tools used to identify variables to include and the modeling approach to use is exploratory data analysis, where graphical analysis is used to understand the underlying data structure. Each variable will be analyzed by itself and with respect to the dependent variable. Exploratory data analysis will be undertaken on the edx\_train dataset.
+
+```{r edx_train, echo=FALSE, warning=FALSE, message=FALSE}
+# load the edx_df1_head R_File created
+edx_train<- readRDS( "C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/edx_train.Rds")
+
+
+```
+
+### Rating
+
+The rating variable represents the rating of the 'm' movie, by the 'u' user, and ranges from 0.5 to 5.0, with a mean of 3.51 and median of 4.0, which means that the variable is negatively skewed. The most frequent number (mode) is 4.0. Additionally, a user is more likely to rate a movie as a whole number, than a rating that ends with 0.5 (Table 3 and Figure 2).
+
+```{r FIG_RATING, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+
+edx_train %>% 
+  group_by(rating) %>% 
+  summarise(n_rating = n(),
+            average = mean(rating),
+            n_rating = formattable::comma(n_rating, digits = 0)) %>% # format number to include commas
+  ggplot(aes(x=rating, y=n_rating, fill= (rating)))+
+  geom_bar(stat = "identity")+
+  geom_text(aes(label=n_rating), vjust=-0.5)  +
+  scale_x_continuous(breaks = seq(0.5,5,0.5)) +
+  scale_fill_gradient(low = "yellow", high = "red", n.breaks=10)+
+  geom_vline(xintercept = mean(edx_train$rating), colour="black")+
+  theme_bw() +
+  labs(y="Number",
+       x="rating")+
+    geom_text(aes(2.8, 2300000, label = paste(
+        "Mean Rating = ", formattable::comma(mean(edx_train$rating), digits = 2)
+        
+      )))
+```
+
+**FIGURE 2: NUMBER OF RATINGS FOR EACH RATING CATEGORY**
+
+```{r Table 3, echo=FALSE}
+
+edx_train %>% 
+   summarise(
+     "minimum (min)" = min(rating),
+     "first_quartile (Q1)" = quantile(rating, 0.25),
+     median = median(rating),
+     mean = mean(rating),
+     "third_quartile (Q3)" = quantile(rating, 0.75),
+     "maximum (max)" = max(rating),
+     standard_deviation = sd(rating)
+        ) %>% 
+  pivot_longer(1:7,names_to = "INDICATORS", values_to = "ESTIMATES") %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 3",
+    subtitle = "DISTRIBUTION OF RATING VARIABLE"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+   tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+  fmt_number(
+    columns = 2,
+    decimals = 3
+  ) 
+
+
+```
+
+### MovieId
+
+The movieId variable is the unique id used to identify movies. There are `r formattable::comma(as.numeric(n_distinct(edx_train$movieId)), digits = 0)` unique movie id in the edx\_train dataset. It is a potentially useful indicator in constructing a model to predict the ratings a user will give a movie. Some movies are of a high quality and therefore are expected to be rated highly by most users on average, while some movies are of low quality and thus expected to be rated low by users on average. This effect we will call the movie effect. The reliability of this effect depends on the number of users that rated the movie, for example, if only one person rated the movie a 5 star, then we would be less confident to predict a 5 star for that movie in general, compared with if 1,000 persons on average rated the movie 5 star. Therefore it is not only important to know how high the movie was rated on average, but also how many users contributed to this average rating.
+
+```{r movieId, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+
+edx_train %>% 
+  group_by(movieId) %>% 
+  summarise(count = n(), avg_rating = mean(rating)) %>% 
+  ggplot(aes(x=count))+
+  geom_histogram(bins = 30, colour = "black") + 
+  scale_x_log10() + 
+  labs(x="Number of Movie ratings (bin=30, and x-axis = log10)")+
+  theme_bw()
+  
+```
+
+**FIGURE 3: NUMBER OF MOVE RATINGS BY MOVIE ID**
+
+A graphical display of the number of times a movie was rated revealed that some movies were rated frequently, while others were rated infrequently (Figure 3). This was because some movies are blockbusters, for example, movieId 296, is for the movie entitled ***Pulp Fiction*** which is rated the most (28,168) in the dataset with an average rating of 4.154 out of 5, which suggests that ***Pulp Fiction*** is a high quality movie (Table 4a).
+
+```{r Table 4a, echo=FALSE, message=FALSE, warning=FALSE}
+
+edx_train %>% 
+  group_by(movieId, title) %>% 
+  summarise(count = n(), avg_rating = mean(rating)) %>% 
+  arrange(desc(count)) %>% 
+  head(n=10) %>% 
+  ungroup() %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 4a",
+    subtitle = "TOP 10 MOST RATE MOVIES"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2,4))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2,4))
+  )  %>% 
+  fmt_number(
+    columns = 4,
+    decimals = 3
+  ) %>% 
+    fmt_number(
+    columns = 3,
+    sep_mark = "," ,
+    decimals = 0
+  ) 
+
+rating_num <- edx_train %>% 
+  group_by(movieId, title) %>% 
+  summarise(n_movieId = n(), avg_rating = mean(rating)) %>% 
+  ungroup() %>% 
+  summarise(less_than_10_ratings = sum(n_movieId<10),
+        less_than_equal_5_ratings = sum(n_movieId<=5), 
+            one_rating = sum(n_movieId==1) )
+  
+  
+  
+  
+```
+
+Similarly, less known movies were rated infrequently, which means we have less confidence in using the average rating of the movie as an indication of how other users will rate these movies (Table 4b). There are `r  rating_num$one_rating` movies with only one rating and `r  formattable::comma(as.numeric(rating_num$less_than_10_ratings),digits=0)` movies with less than 10 ratings. If we include movieId as a predictor when predicting ratings, the training model will overfit on movie Ids that have a small amount of ratings in the training dataset, and thus give a poor prediction in a dataset not used in the training (validation dataset). For example, movieId 3226, entitled ***Hellhounds on My Trail** was rated by one user, who gave it a rating of 5. If a linear model was used to predict the rating of movieId 3226, it will most likely overestimate how other users will rate* **Hellbounds on My Trail***.*\
+
+```{r Table 4b, echo=FALSE, warning=FALSE, message=FALSE}
+
+edx_train %>% 
+  group_by(movieId, title) %>% 
+  summarise(count = n(), avg_rating = mean(rating)) %>% 
+  arrange((count)) %>% 
+  head(n=10) %>% 
+  ungroup() %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 4b",
+    subtitle = "TOP 10 LEAST RATED MOVIES)"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2,4))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2,4))
+  )  %>% 
+  fmt_number(
+    columns = 4,
+    decimals = 3
+  ) %>% 
+    fmt_number(
+    columns = 3,
+    sep_mark = "," ,
+    decimals = 0
+  ) 
+
+
+
+```
+
+To control for overfitting because of small sample size, one method often used in the literature is regularization, which seeks to shrink or regularize the coefficients, which reduces the variance, with a negligible increase in bias [@james2013].
+
+Another important consideration is the variability of the indicator, that is, can we find significant differences in the ratings of movies, or, are most movies rated the same in general. The average movie ratings for each movie showed that some movies are rated low (0.5) on average, while others are rated high(5.0) on average (Table 4c). These average ratings however have to be viewed with caution given the number of times that the movie has been rated ranges from 1 to 28,168 (see Table 4b and Table 4c) .
+
+```{r Table 4c, echo=FALSE, warning=FALSE, message=FALSE}
+
+    
+ edx_train %>% 
+   group_by(movieId) %>% 
+   summarise(avg_rating = mean(rating)) %>% 
+   ungroup() %>% 
+   summarise(Indicator = c("min", "Q1", "median", "Q3", "max", "Inter-Quartile Range", "range"),
+             movieId_avg_rating= c(quantile(avg_rating, c(0, 0.25, 0.5, 0.75,1)), IQR(avg_rating), (max(avg_rating)-min(avg_rating)))
+             ) %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 4c",
+    subtitle = "DISTRIBUTION OF AVERAGE MOVIE RATINGS BY MOVIEID"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+  fmt_number(
+    columns = 2,
+    decimals = 3
+  ) 
+
+```
+
+### UserId
+
+The userId variable, which represents the unique id for each user, is also a potential useful predictor when predicting ratings. There are `r formattable::comma(as.numeric(n_distinct(edx_train$userId)), digits = 0)` users in the edx\_train dataset. It is theorized that certain users are more generous in their ratings (i.e. more likely to rate a movie above its average rating), while others are more frugal (i.e. more likely to rate a movie below its average rating), this we will call the user effect. The confidence in which we can say a user is generous or frugal will be dependent on the extent to which they have rated a sufficiently large number of movies.
+
+```{r UserId, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+
+edx_train %>% 
+  group_by(userId) %>% 
+  summarise(n_userId = n(), avg_rating = mean(rating)) %>% 
+  ggplot(aes(x=n_userId))+
+  geom_histogram(bins = 30, colour = "black") + 
+  scale_x_log10() + 
+  labs(x="Number of times a user rates a movie (bin=30, and x-axis = log10)")+
+  theme_bw()
+  
+
+```
+
+**FIGURE 4: NUMBER OF MOVE RATINGS BY USER ID**
+
+Figure 4 displays the distribution for the number of times a user rates a movie, similar to the movie Id variable, we have some users that are very active in rating movies, while other users have only rated a few movies.The minimum number of ratings undertaken by a user in the edx\_train dataset was 9, with the largest 5,931.The average user effect by userId ranges between 0.5 and 5.0, with the interquartile range being 0.549. (Table 5).
+
+```{r Table 5, echo=FALSE, warning=FALSE, message=FALSE}
+
+   edx_train %>% 
+   group_by(userId) %>% 
+   summarise(avg_rating = mean(rating)) %>% 
+   ungroup() %>% 
+   summarise(Indicator = c("min", "Q1", "median", "Q3", "max", "Inter-Quartile Range", "range"),
+             UserId_avg_rating= c(quantile(avg_rating, c(0, 0.25, 0.5, 0.75,1)), IQR(avg_rating), (max(avg_rating)-min(avg_rating)))
+             ) %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 5",
+    subtitle = "DISTRIBUTION OF AVERAGE MOVIE RATINGS BY USERID"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+  fmt_number(
+    columns = 2,
+    decimals = 3
+  ) 
+
+```
+
+### Genres
+
+The genre variable is used to classify the different style of movies, some movies have several genres, while others fall into one genre. Within the edx\_train dataset there are `r formattable::comma(as.numeric(n_distinct(edx_train$genres)), digits = 0)` genre groups, which includes individual genres or a combination of genres. Within the genres variable there are 18 genres, IMAX (i.e. high-resolution films) and one movie with no genre listing which was watched 7 times. Majority of the movies in the edx\_train dataset had drama, comedy and action in the genres variable, either individually, or as part of a broader genres group (Table 6).
+
+```{r edx_genres, echo=FALSE, warning=FALSE, message=FALSE}
+# load the edx_genre R_File created
+edx_genres<- readRDS( "C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/edx_train_genres.Rds")
+
+edx_genres %>% 
+  select(genres, count) %>% 
+   gt()  %>% 
+  tab_header(
+    title = "TABLE 6",
+    subtitle = "BASIC STATS ON AVERAGE MOVIE RATINGS AND NUMBER OF RATINGS BY USERID"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+     fmt_number(
+    columns = 2,
+    sep_mark = "," ,
+    decimals = 0
+  ) 
+```
+
+The genres group with the highest average rating was Animation\|IMAX\|Sci-Fi with an average rating of 4.67 (Table 7). However, it should be noted that movies that fall within this genre group was only rated 6 times.
+
+```{r Table 7, echo=FALSE, warning=FALSE, message=FALSE}
+
+   edx_train %>% 
+  group_by(genres) %>% 
+  summarise( avg_rating = mean(rating), count = n()) %>% 
+  arrange(desc(avg_rating)) %>% 
+  head(n=10) %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 7",
+    subtitle = "TOP 10 AVERAGE BY GENRES GROUP"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+  fmt_number(
+    columns = 2,
+    decimals = 3
+  ) %>% 
+    fmt_number(
+    columns = 3,
+    sep_mark = "," ,
+    decimals = 0
+  ) 
+
+
+```
+
+The genre group with the worst ratings on average was Documentary\|Horror, with an average rating of 1.44 (Table 8).
+
+```{r Table 8, echo=FALSE, warning=FALSE, message=FALSE}
+
+   edx_train %>% 
+  group_by(genres) %>% 
+  summarise( avg_rating = mean(rating), count = n()) %>% 
+  arrange((avg_rating)) %>% 
+  head(n=10) %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 8",
+    subtitle = "LOWEST 10 AVERAGE BY GENRES GROUP"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+  fmt_number(
+    columns = 2,
+    decimals = 3
+  ) %>% 
+    fmt_number(
+    columns = 3,
+    sep_mark = "," ,
+    decimals = 0
+  ) 
+
+
+
+```
+
+Given the differences in the rating by genres, the genres is also another indicator that can provide insight on how a movie is rated, as a combinations of different genres may have a high rating on average, while other combinations may have relatively low ratings. Table 9 presents the summary statistics of the genre in terms of average ratings. The average ratings by genres ranges from 1.441 to 4.667, with an interquartile range of 0.588 (Table 9).
+
+```{r Table 9, echo=FALSE, warning=FALSE, message=FALSE}
+
+   edx_train %>% 
+   group_by(genres) %>% 
+   summarise(count = n(), avg_rating = mean(rating)) %>% 
+   ungroup() %>% 
+   summarise(Indicator = c("min", "Q1", "median", "Q3", "max", "Inter-Quartile Range", "range"),
+             genres_avg_rating= c(quantile(avg_rating, c(0, 0.25, 0.5, 0.75,1)), IQR(avg_rating), (max(avg_rating)-min(avg_rating)))
+             ) %>% 
+  gt()  %>% 
+  tab_header(
+    title = "TABLE 9",
+    subtitle = "DISTRIBUTION OF AVERAGE MOVIE RATINGS BY GENRES"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+  fmt_number(
+    columns = 2,
+    decimals = 3
+  ) 
+
+```
+
+### Date Effects
+
+Features were generated using information on the year the movie premiered, and the date the movie was rated (year, month, week and day of the week), as well as the difference between when a movie was rated and when it premiered as potential predictors to be included in the movie recommendations.
+
+Each date feature will be assessed graphically, by looking on the average effect by date period, a 95% error bar that gives us an idea of how confident we should be above the average effect for each date effect, and a local polynomial regression fit (loess) to identify trends. Key takeaways from each date feature within the edx\_train dataset are:
+
+#### Premiere Year
+
+```{r premier_year, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+edx_train %>% 
+  group_by(year_movie) %>% 
+  summarise(n = n(),
+            avg_rating = mean(rating),    # calculating the average rating by premiere year
+            sd = sd(rating),              # calculating the standard deviation of rating by premiere year
+            se = sd/sqrt(n),              # calculating the standard error of rating by premiere year
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n),   # calculating a 95% confidence interval by premeir year
+            min_rating = min(rating),    # calculating the minimum rating by premiere year
+            max_rating=max(rating)) %>%    # calculating the maximum rating by premiere year
+  ggplot(aes(x=year_movie, y=avg_rating))+
+  geom_line(linetype = 4)+
+  geom_errorbar(aes(ymin = avg_rating - ci, 
+                    ymax = avg_rating + ci), 
+                    colour = "red",
+                width = 1.5)+
+    scale_y_continuous(breaks = seq(0.5, 5, 0.5), 
+                   limits=c(2, 5))+
+  theme_bw()+
+  geom_smooth()+
+  labs(x = "premiere year",
+       y= "average movie rating")
+
+
+```
+
+**FIGURE 5: AVERAGE EFFECT BY YEAR MOVIE PREMIERED**
+
+-   The first movie premiered in 1915 and the last movie premiered in 2008.
+
+-   There is a upward trend in the average rating over time up to mid 1940s and thereafter the rating based on the year the movie premiered begins to decline.
+
+-   Movies that premiered in the earlier periods have wider confidence bands, suggesting higher variability in the ratings in the earlier years, as users are less likely to watch movies in the earliest periods (1915-1930).
+
+#### year\_rated
+
+```{r year_rated, echo=FALSE, warning=FALSE, message=FALSE, fig.align='left'}
+
+library(patchwork)
+
+ fig_yr1 <- edx_train %>% 
+  group_by(year_rated) %>% 
+  summarise(n = n(),
+            avg_rating = mean(rating),    # calculating the average rating by premiere year
+            sd = sd(rating),              # calculating the standard deviation of rating by premiere year
+            se = sd/sqrt(n),              # calculating the standard error of rating by premiere year
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n),   # calculating a 95% confidence interval by premeir year
+            min_rating = min(rating),    # calculating the minimum rating by premiere year
+            max_rating=max(rating)) %>%    # calculating the maximum rating by premiere year
+  ggplot(aes(x=year_rated, y=avg_rating))+
+  geom_line(linetype = 4)+
+  geom_errorbar(aes(ymin = avg_rating - ci, 
+                    ymax = avg_rating + ci), 
+                    colour = "red",
+                width = 1.5)+
+    scale_y_continuous(breaks = seq(0.5, 5, 0.5), 
+                   limits=c(2, 5))+
+   scale_x_continuous(breaks = seq(1995, 2010, 1))+
+  theme_bw()+
+  geom_smooth()+
+  labs(x = "Year Rated",
+       y= "average movie rating")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  fig_yr1 
+ 
+```
+
+**FIGURE 6: AVERAGE EFFECT BY YEAR MOVIE WAS RATED**
+
+-   The first rating was done in 1995 and the last rating was done in 2009.
+
+-   1995, does not have a 95% confidence band, as only one person rated a movie in 1995. Therefore the rating for 1995 should be interpreted with caution.
+
+-   The average rating for movies rated in 2001 and earlier, were higher than movies rated after 2001.
+
+#### year\_gap
+
+```{r year_gap, echo=FALSE, warning=FALSE, message=FALSE, fig.align='left'}
+
+edx_train %>% 
+  group_by(year_gap) %>% 
+  summarise(n = n(),
+            avg_rating = mean(rating),    # calculating the average rating by year gap
+            sd = sd(rating),              # calculating the standard deviation of rating by year gap
+            se = sd/sqrt(n),              # calculating the standard error of rating by year gap
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n),   # calculating a 95% confidence interval by year gap
+            min_rating = min(rating),    # calculating the minimum rating by year gap
+            max_rating=max(rating)) %>%    # calculating the maximum rating by year gap
+  ggplot(aes(x=year_gap, y=avg_rating))+
+  geom_line()+
+  geom_errorbar(aes(ymin = avg_rating - ci, 
+                    ymax = avg_rating + ci), 
+                colour = "red",
+                width = 1.5)+
+# scale_x_continuous(breaks = seq(-4, 96, 2))+
+  scale_y_continuous(breaks = seq(0.5, 5, 0.5), 
+                     limits=c(2, 5))+
+  theme_bw()+
+  geom_smooth()+
+  labs(x = "Gap (Number of Years) ",
+       y= "average movie rating")
+
+
+
+```
+
+**FIGURE 7: AVERAGE EFFECT BY GAP BETWEEN YEAR RATED AND YEAR MOVIE PREMIERED**
+
+-   The gap between when a movie was rated and when it premiered ranged from -2 to 93 years. This indicates that there is some error in the data, as a user cannot rate a movie before it premiered. There were `r sum(edx_train$year_gap<0)` ratings that fit this criteria. There are several ways to control for this error, one way is to delete these observations, another way to correct for this error without losing any observations is to recode all gap years that are negative to zero. This is assuming that the year the movie was rated was equal to the year it premiered. This is expected to have no material effect on the estimate.
+
+-   There is an upward trend (positive relationship) between the time a movie is rated and when it premiered up to 58 years. After the 70th year, this trend began to move downward (negative relationship). Suggesting the nostalgia effects (positive relationship), *things made in the past are better,* up to first 58 years and thereafter the technology effect (negative relationship), as the quality of the movie based on technology used may be too poor for persons to full enjoy the movie. However, it should be noted that the confidence intervals are largest in the outer years of the year gap, reflecting a relatively small number of ratings undertaken in those years. These represent movies that premiered in the earliest years (1915-1935).
+
+#### Month rated
+
+```{r month_rated, echo=FALSE, message=FALSE, warning=FALSE,fig.align='left' }
+
+ month <- seq(as.Date("2019-01-01"), as.Date("2019-12-01"), by = "1 month")
+month_label <- lubridate::month(month, label=TRUE)
+
+
+edx_train %>% 
+  group_by(month_rated) %>% 
+  summarise(n = n(),
+            avg_rating = mean(rating),    # calculating the average rating by month rate
+            sd = sd(rating),              # calculating the standard deviation of rating by month rated
+            se = sd/sqrt(n),              # calculating the standard error of rating by month rated
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n),   # calculating a 95% confidence interval by month rated
+            min_rating = min(rating),    # calculating the minimum rating by month rated
+            max_rating=max(rating)) %>%    # calculating the maximum rating by month rated
+  ggplot(aes(x= month_rated, y=avg_rating))+
+  geom_line() +
+  geom_errorbar(aes(ymin = avg_rating - ci, 
+                    ymax = avg_rating + ci), 
+                colour = "red",
+                width = 1.5)+
+  geom_smooth()+
+  scale_x_continuous(breaks = 1:12,
+                     labels = month_label)  +
+  scale_y_continuous(breaks = seq(0.5, 5, 0.5), 
+                     limits=c(2, 5))+
+  theme_bw()+
+  labs(x = "Month",
+       y= "average movie rating")
+
+
+
+```
+
+**FIGURE 8: AVERAGE EFFECT BY MONTH RATED**
+
+-   There is not much variability between the average rating when grouped by months (Figure 8). This suggests that this feature may not add significant value in distinguishing one movie from another.
+
+#### Week rated
+
+```{r week_rated, echo=FALSE, warning=FALSE, message=FALSE, fig.align='left'}
+
+edx_train %>% 
+  group_by(week_rated) %>% 
+  summarise(n = n(),
+            avg_rating = mean(rating),    # calculating the average rating by week rate
+            sd = sd(rating),              # calculating the standard deviation of rating by week  rated
+            se = sd/sqrt(n),              # calculating the standard error of rating by week rated
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n),   # calculating a 95% confidence interval by week rated
+            min_rating = min(rating),    # calculating the minimum rating by week rated
+            max_rating=max(rating)) %>%    # calculating the maximum rating by week rated
+  ggplot(aes(x=  week_rated, y=avg_rating))+
+  geom_line()+
+  geom_smooth()+
+  geom_errorbar(aes(ymin = avg_rating - se, 
+                    ymax = avg_rating + se), 
+                colour = "red",
+                width = 1.5)+
+ scale_x_continuous(breaks = seq(1, 53, 3))+
+ scale_y_continuous(breaks = seq(0.5, 5, 0.5), 
+                     limits=c(2, 5))+
+  theme_bw()+
+  labs(x = "Week",
+       y= "average movie rating")
+
+```
+
+**FIGURE 9 AVERAGE EFFECT BY WEEK RATED**
+
+-   There is not much variability in the average when the data is grouped by weeks (Figure 9).
+
+#### day rated
+
+```{r day_rated, echo=FALSE, warning=FALSE, message=FALSE,fig.align='left' }
+
+week_days<- seq(as.Date("2020-11-01"), as.Date("2020-11-07"), by = "1 day")
+week_days_label <- lubridate::wday(week_days, label=TRUE)
+
+edx_train %>% 
+  group_by(day_rated) %>% 
+  summarise(n = n(),
+            avg_rating = mean(rating),    # calculating the average rating by weekday rate
+            sd = sd(rating),              # calculating the standard deviation of rating by weekday  rated
+            se = sd/sqrt(n),              # calculating the standard error of rating by weekday rated
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n),   # calculating a 95% confidence interval by weekday rated
+            min_rating = min(rating),    # calculating the minimum rating by weekday rated
+            max_rating=max(rating)) %>%    # calculating the maximum rating by weekday rated
+  ggplot(aes(x=  day_rated, y=avg_rating))+
+  geom_line()+
+  geom_errorbar(aes(ymin = avg_rating - se, 
+                    ymax = avg_rating + se), 
+                colour = "red",
+                width = 1.5)+
+  scale_x_continuous(breaks = seq(1, 7, 1),
+                     labels = week_days_label)  +
+  scale_y_continuous(breaks = seq(0.5, 5, 0.5), 
+                     limits=c(2, 5))+
+  theme_bw()+
+  labs(x = "Weekday",
+       y= "average movie rating")
+
+
+
+
+```
+
+**FIGURE 10: AVERAGE EFFECT BY WEEK DAY RATED**
+
+-   There is not much variability when the data is grouped by days (Figure 10).
+
+Table 10 presents a distributional breakdown of the date features by its mean, after adjusting for the discrepancies in the gap year features. That is, gap years that were negative were recoded to be equal to zero. The data suggests that the year features (premiere year, year rated and gap\_year) have more variability and thus are potentially more useful in building a recommendation model than the month, week and day feature.
+
+```{r table 10, echo=FALSE, warning=FALSE, message=FALSE }
+# load the edx_genre R_File created
+date_effect<- readRDS( "C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/date_effect.Rds")
+
+date_effect %>% 
+  select(1:7) %>% 
+  rename("Indicator" = rank, "premiere year" = ayear_movie, "year rated" = ayear_rated, "year gap " =ayear_gap, "month rated" = amonth_rated, "week rated" = aweek_rated, "day rated" = aday_rated) %>% 
+   gt()  %>% 
+  tab_header(
+    title = "TABLE 10",
+    subtitle = "DISTRIBUTION OF AVERAGE MOVIE RATINGS BY DATE FEATURES"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3,5,7))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3,5,7))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2,4,6))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2,4,6))
+  )  %>% 
+     fmt_number(
+    columns = 2:7,
+    sep_mark = "," ,
+    decimals = 3
+  ) 
+
+```
+
+Table 11 presents a distributional breakdown of the data features by the number of times each of these features were rated. This is done to give insight in the reliability of some of the averages for each time period.
+
+```{r table 11, echo=FALSE, warning=FALSE, message=FALSE}
+# load the edx_genre R_File created
+date_effect<- readRDS( "C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/date_effect.Rds")
+
+date_effect %>% 
+  select(1, 8:13) %>% 
+  rename("Indicator" = rank, "premiere year" = cyear_movie, "year rated" = cyear_rated, "year gap " =cyear_gap, "month rated" = cmonth_rated, "week rated" = cweek_rated, "day rated" = cday_rated) %>% 
+   gt()  %>% 
+  tab_header(
+    title = "TABLE 11",
+    subtitle = "DISTRIBUTION OF THE NUMBER OF MOVIE RATINGS BY DATE FEATURES"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1,3,5,7))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1,3,5,7))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2,4,6))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2,4,6))
+  )  %>% 
+     fmt_number(
+    columns = 2:7,
+    sep_mark = "," ,
+    decimals = 0
+  ) 
+
+```
+
+# SECTION III: METHODOLOGY
+
+This section of the report provides the methodology that will be used to construct the movie recommendation model. The approach taken would incorporate lessons learned from the Netflix challenge [@bell2007]. Based on the exploratory data analysis, six predictors will be included in the model.
+
+-   Movie Effect ($b_m$), this will capture the average movie effect
+
+-   User effect ($b_u$), this will capture the average user effect while controlling for movie effects
+
+-   Genres effect ($b_g$), this will capture the average genre effect while controlling for movie and user effects
+
+-   Premiere Year effect ($b_p$), this will capture the average effect of the year the movie premiered while controlling for movie, user and genres effects
+
+-   Year Gap effect ($b_{gap}$), this will capture the average effect of the gap between when the movie was rated and when it premiered while controlling for movie, user, genre and premiere year effects
+
+-   Year Rated effect ($b_r$), this will capture the average effect of the year the movie was rated while controlling for movie, user, genres, premiere year and year gap effects
+
+The goal is to estimate the rating of each movie by each user ($r_{m,u}$) using the six predictors. Our estimate of $r_{m,u}$ is $\hat{b}_{m,u}$. This suggests the following model:
+
+$$
+ \hat{b}_{m,u} = \bar{b} + \hat{b}_m + \hat{b}_u + \hat{b}_g + \hat{b}_p + \hat{b}_{gap} + \hat{b}_r\
+$$
+
+$$
+ \hat{r}_{m,u} = \bar{b} + \hat{b}_m + \hat{b}_u + \hat{b}_g + \hat{b}_p + \hat{b}_{gap} + \hat{b}_r + \hat{e}_{m,u}\
+$$
+
+Where $\hat{e}_{m,u}$, represents the error term, the portion of $r_{m,u}$ that cannot be explained by the model. We will like to minimize the RMSE. $$
+RMSE = \sqrt{\frac{1}{N} \sum_{m,u}^{} \left( \hat{b}_{m,u} - r_{m,u} \right)^2 }\
+$$
+
+One of the key findings of the exploratory data analysis is that there are small sample sizes for some of our estimates, for example, some movies are only rated once. This leads to overfitting of model parameters and an inflated variance. To control for that we will utilize a regularized model.
+
+Regularized 1 (R1) will estimate each effect using a step wise approach using the edx\_train dataset to build the model, and the edx\_test dataset will be used to tune the penalty term. The penalty term that minimizes the RMSE will be utilized to build the model at each stage. Once an effect is estimated, it will be assumed to be fixed, and used in the estimate of the other effects. Therefore the penalty term used to estimate each parameter may be different.
+
+## Estimate of R1 effects:
+
+$$
+ Average-Effect: \bar{b} 
+$$
+
+$$
+ Movie-Effect: \hat{b}_m = \frac {1}{n_m+\lambda_m} \sum_{u=1}^{n_u}(r_{m,u}-\bar{b})
+$$
+
+$$
+ User-Effect: \hat{b}_u = \frac {1}{n_u+\lambda_u} \sum_{m=1}^{n_m}(r_{m,u}-\bar{b}-\hat{b}_m)
+$$
+
+This is done for all the other effects, which will have a different value that optimizes lambda (penalty term) for each parameter.
+
+# SECTION IV:RESULTS
+
+The model was developed using a step wise approach to assess the contribution of each additional variable. The penalty term was optimized using the lowest RMSE in the edx\_test set for each variable (Figure 11 A, Figure 11B, Figure 11C).
+
+```{r Figure11a, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+
+knitr::include_graphics("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/graph/fig_lambda_mu.png")
+
+
+
+```
+
+FIGURE 11A: Optimal value of $\lambda_{m}$ and $\lambda_{u}$ that optimize RMSE
+
+```{r Figure11b, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+
+knitr::include_graphics("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/graph/fig_lambda_gp.png")
+
+
+
+```
+
+FIGURE 11B: Optimal value of $\lambda_{g}$ and $\lambda_{p}$ that optimize RMSE
+
+```{r Figure11c, echo=FALSE, warning=FALSE, message=FALSE, fig.width=7 , fig.align='left'}
+
+knitr::include_graphics("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/graph/fig_lambda_gapr.png")
+
+
+
+```
+
+FIGURE 11C: Optimal value of $\lambda_{gap}$ and $\lambda_{r}$ that optimize RMSE
+
+The greatest reduction in the RMSE came when the movieId and userId were included within the model (Table 12). The date effects contributed marginally to the reduction in the RMSE, when we controlled for the movie, user and genre effects.
+
+```{r rmse_valid1, echo=FALSE, message=FALSE, warning=FALSE}
+# load the movielens_distinct dataset
+RMSE_edx_test <- readRDS("C:/Users/Hugh Morris/Desktop/Capstone/Capstone Project/dataset/RMSE_edx_test.Rds")
+
+RMSE_edx_test %>% 
+    gt()  %>% 
+  tab_header(
+    title = "TABLE 12",
+    subtitle = "RMSE FOR EDX_TEST SET"
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00707a"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("title"))
+  ) %>% 
+  tab_style(
+    style = list(
+      # cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_title(group = c("subtitle")) 
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(1))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_column_labels(columns = c(2))
+  ) %>% 
+  tab_style(
+    style = list(
+      #cell_fill(color = "#00a1af"),
+      cell_text(weight = "bolder", color = "black")
+    ),
+    locations = cells_body(columns = c(2))
+  )  %>% 
+  fmt_number(
+    columns = 2,
+    decimals = 5
+  )
+
+```
+
+When the final model is applied to the validation dataset, an RMSE of `r round(rmse_validation$.estimate,5)` was produced. It should be noted that without the date effects the RMSE would have been `r round(rmse_validation_nodate$.estimate,5)`, which is above the desired target of 0.86490.
+
+# SECTION V CONCLUSION
+
+## Summary
+
+A model was developed to predict the rating a user will give to a movie, i.e. movie recommendation system. The model utilizes six predictors in model construction, which included the movie effect, user effect, genre effect and date effects. The date effects captures information on the year the movie premiered, the year the movie was rated, as well as the gap between when a movie was rated and when it premiered.
+
+The model produced a RMSE of `r round(rmse_validation$.estimate,5)`, which was lower than the desired cutoff of 0.86490. The date effects were found to be important in achieving this goal, which highlights the importance of feature engineering in model development. Additionally, a regularization approach was also critical in model construct.
+
+## Limitations
+
+-   Due to lack of computer power (RAM capacity):
+
+    -   The parameters were approximation of the least square estimates.
+
+    -   Each lambda (penalty term) parameter was tuned individually instead of simultaneously, this would have reduced the potential accuracy of the model
+
+    -   Limitations were placed on feature engineering, which included generating interactive terms between the different predictors (e.g. date effects and genre - does the rating of genre horror, differs in October (Halloween) relatively to other months).
+
+    -   More sophisticated machine learning models were not used, such as Ridge, Lasso and Elastic Net.
+
+-   The model is only applicable to movies and users that are already part of the training set.
+
+## Further Extension
+
+-   Develop a model using a subset of the data and generate additional features and more sophisticated machine learning algorithms using cloud computing services (e.g. Amazon Web Services). Collect additional information on each movie as potential predictors, for example, the lead actress/actor and director of movie.
+
+# REFERENCES
