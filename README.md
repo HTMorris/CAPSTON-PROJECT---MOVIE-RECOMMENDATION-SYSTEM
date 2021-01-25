@@ -1,4 +1,4 @@
-# CAPSTON-PROJECT---MOVIE-RECOMMENDATION-SYSTEM
+# CAPSTONE-PROJECT---MOVIE-RECOMMENDATION-SYSTEM
 
 •	This project was done to partial fulfil the requirement of my capstone project for HarvardX PH125.9x
 Data Science: Capstone.
